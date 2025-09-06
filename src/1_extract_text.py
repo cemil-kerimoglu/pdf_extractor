@@ -16,6 +16,7 @@ Output: one .txt per input PDF in data/text/.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 import pdfplumber
@@ -46,6 +47,20 @@ MAX_WORKERS = min(os.cpu_count() or 2, 8)
 _env = os.getenv("OCR_MAX_WORKERS")
 if _env and _env.isdigit():
     MAX_WORKERS = max(1, int(_env))
+
+# Strict, conservative normalizer for observed brand OCR glitches.
+# - Word boundaries (\b) ensure we don't alter parts of other words.
+# - We preserve the ® if present.
+BRAND_GLITCH_PATTERNS = [
+    # 1EBEA / IEBEA / lEBEA / |EBEA  → TEBEA (keep optional ®)
+    (re.compile(r"\b[1Il\|]EBEA(\s*®)?\b", re.IGNORECASE), r"TEBEA\1"),
+    # More patterns can be added here as needed
+]
+
+def normalize_known_ocr_brand_glitches(text: str) -> str:
+    for pat, repl in BRAND_GLITCH_PATTERNS:
+        text = pat.sub(repl, text)
+    return text
 
 
 def page_has_some_text(page) -> bool:
@@ -141,7 +156,7 @@ def extract_text_mixed(pdf_path: Path) -> str:
             ]
             for fut in as_completed(futs):
                 pno, ocr_txt = fut.result()
-                pieces[pno - 1] = f"\n--- [PAGE {pno}] ---\n{ocr_txt}"
+                pieces[pno - 1] = f"\n--- [PAGE {pno}] ---\n{normalize_known_ocr_brand_glitches(ocr_txt)}"
 
     # All pages should now be filled
     return "".join(pieces)
@@ -181,7 +196,7 @@ def process_pdf(pdf_path: Path):
             futs = [ex.submit(_ocr, (i, im)) for i, im in enumerate(images, start=1)]
             for fut in as_completed(futs):
                 i, t = fut.result()
-                results[i - 1] = f"\n--- [PAGE {i}] ---\n{t}"
+                results[i - 1] = f"\n--- [PAGE {i}] ---\n{normalize_known_ocr_brand_glitches(t)}"
         text = "".join(results)
 
     out_path.write_text(text, encoding="utf-8")

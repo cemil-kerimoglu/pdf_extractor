@@ -4,5 +4,6 @@
 *.png
 .env
 .venv
+*.csv
 /quick_checks
 /data
